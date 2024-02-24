@@ -59,3 +59,11 @@ curl ipinfo.io -x localhost:8901
 
 * This project is intended for personal use. When using it, please comply with the terms of service of your VPN provider.
 * This project is inspired by the following repository: https://github.com/DoganM95/Expressvpn-Proxy-Adapter
+
+Certainly, here's the revised section in English.
+
+---
+
+## Additional Information
+
+If you're interested in trying ExpressVPN, registering through this link will grant you a 30-day free trial. For more details, please visit [ExpressVPN 30-Day Free Trial](https://www.expressrefer.com/refer-a-friend/30-days-free?locale=jp&referrer_id=96807179&utm_campaign=referrals&utm_medium=copy_link&utm_source=referral_dashboard).
