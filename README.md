@@ -60,9 +60,6 @@ curl ipinfo.io -x localhost:8901
 * This project is intended for personal use. When using it, please comply with the terms of service of your VPN provider.
 * This project is inspired by the following repository: https://github.com/DoganM95/Expressvpn-Proxy-Adapter
 
-Certainly, here's the revised section in English.
-
----
 
 ## Additional Information
 
