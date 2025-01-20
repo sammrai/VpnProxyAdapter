@@ -63,4 +63,4 @@ curl ipinfo.io -x localhost:8901
 
 ## Additional Information
 
-If you're interested in trying ExpressVPN, registering through this link will grant you a 30-day free trial. For more details, please visit [ExpressVPN 30-Day Free Trial](https://www.expressrefer.com/refer-a-friend/30-days-free?locale=jp&referrer_id=96807179&utm_campaign=referrals&utm_medium=copy_link&utm_source=referral_dashboard).
+It seems that ExpressVPN is currently offering a 30-day free trial.　[ExpressVPN's official website](https://www.expressvpn.com).
