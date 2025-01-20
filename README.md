@@ -25,7 +25,7 @@ VpnProxyAdapter is a Docker-based solution that facilitates internet connections
 
    - `OPENVPN_USERNAME` and `OPENVPN_PASSWORD` are the username and password provided by your VPN provider.
    - `OPENVPN_PROVIDER` is the name of the VPN provider you are using. While this project uses ExpressVPN as an example, you can choose any provider from the [list of supported VPN providers](https://github.com/haugene/docker-transmission-openvpn/blob/master/docs/supported-providers.md#external-providers).
-   - `OPENVPN_CONFIG` is the name of the VPN configuration. For ExpressVPN, you can select from the [Expressvpn-Proxy-Adapter ovpn_list](https://github.com/DoganM95/Expressvpn-Proxy-Adapter/blob/master/ovpn_list).
+   - `OPENVPN_CONFIG` is the name of the VPN configuration. For ExpressVPN, you can select from the [Expressvpn-Proxy-Adapter ovpn_list](./README-configlist.md).
 
 1. Starting the service
 
