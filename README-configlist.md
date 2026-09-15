@@ -1,7 +1,7 @@
 
 ## Supported Configurations
 
-Below are some of the supported `OPENVPN_CONFIG` configurations:  
+Below are the ExpressVPN configurations. For `REGIONS`, drop the `my_expressvpn_` prefix and the `_udp` suffix (e.g. `japan_-_tokyo`):  
 
 > **Note:** These configurations have not been tested and may require adjustments.
 
