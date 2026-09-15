@@ -14,7 +14,7 @@
 設定は環境変数 (compose の environment) か引数で渡す。
 
     EXITS=20  RATE=6  LISTEN=0.0.0.0:8545  UPSTREAM=https://...  REGIONS=japan_-_tokyo,...  INCLUDE_HOST=1
-    OPENVPN_USERNAME / OPENVPN_PASSWORD
+    OPENVPN_USERNAME / OPENVPN_PASSWORD  OPENVPN_PROVIDER=expressvpn (設定リポジトリのフォルダ名)
 
 GET / で出口とトンネルの状態が見られる。
 PROXY_LISTEN (既定 0.0.0.0:8118) では汎用の HTTP プロキシも受ける。VPN の出口をラウンドロビンで使う (proxy.py)。
@@ -242,16 +242,26 @@ def main(argv=None):
         user, pw = env("OPENVPN_USERNAME"), env("OPENVPN_PASSWORD")
         if not user or not pw:
             raise SystemExit("OPENVPN_USERNAME / OPENVPN_PASSWORD が無い")
+        provider = env("OPENVPN_PROVIDER", "expressvpn").lower()
+        conf_dir = env("CONF_DIR") or tunnels.conf_dir_for(provider)
+        preferred = [r.strip() for r in args.regions.split(",") if r.strip()] or tunnels.PREFERRED.get(provider, [])
+        regions = tunnels.candidate_regions(preferred, conf_dir) if os.path.isdir(conf_dir) else []
+        if not regions:
+            try:
+                have = ", ".join(tunnels.providers())
+            except OSError:
+                have = "?"
+            raise SystemExit(f"{conf_dir} に .ovpn が無い (OPENVPN_PROVIDER={provider})。使えるプロバイダ: {have}")
         tunnels.write_auth(user, pw)
-        preferred = [r for r in args.regions.split(",") if r] or tunnels.DEFAULT_REGIONS
+        logger.info("プロバイダ %s / 地域の候補 %d", provider, len(regions))
 
         def on_change(up):
             found = host_exits + [Exit(t["name"], t["egress"], t["session"], device=t["dev"]) for t in up]
             added, gone = pool.refresh(found)
             logger.info("出口 %d 本 (+%s -%s)", len(pool.exits), added, gone)
 
-        mgr = tunnels.Manager(n_vpn, tunnels.candidate_regions(preferred), on_change,
-                              egress_of=egress_of, session_of=session_for)
+        mgr = tunnels.Manager(n_vpn, regions, on_change, egress_of=egress_of, session_of=session_for,
+                              conf_dir=conf_dir)
         mgr.start()
 
         def stop(*_):

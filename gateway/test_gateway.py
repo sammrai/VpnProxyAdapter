@@ -1,6 +1,8 @@
 """中継の振り分け・流量・再試行と、トンネル管理を固定する。OpenVPN と通信は偽物で置き換える。"""
 import json
+import os
 import socket
+import subprocess
 import threading
 
 import pytest
@@ -156,7 +158,9 @@ def _conf(tmp_path, regions):
     d = tmp_path / "conf"
     d.mkdir()
     for r in regions:
-        (d / f"my_expressvpn_{r}_udp.ovpn").write_text(f"client\nremote host-{r} 1195\n")
+        f = d / f"{r}.ovpn"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(f"client\nremote host-{r} 1195\n")
     return str(d)
 
 
@@ -165,12 +169,39 @@ def test_openvpn_argv_keeps_default_route():
     assert "--route-nopull" in argv
     assert argv[argv.index("--dev") + 1] == "tun4"
     assert argv[argv.index("--setenv") + 1:argv.index("--setenv") + 3] == ["TABLE", "104"]
-    assert argv[argv.index("--config") + 1] == "/c/my_expressvpn_japan_-_tokyo_udp.ovpn"
+    assert argv[argv.index("--config") + 1] == "/c/japan_-_tokyo.ovpn"
+    assert argv.index("--cd") < argv.index("--config") and argv[argv.index("--cd") + 1] == "/c"
 
 
 def test_candidate_regions_puts_preferred_first(tmp_path):
     conf = _conf(tmp_path, ["a", "b", "c"])
     assert tunnels.candidate_regions(["c", "zz", "a"], conf) == ["c", "a", "b"]
+
+
+def test_candidate_regions_walks_subdirs_and_matches_part_of_name(tmp_path):
+    conf = _conf(tmp_path, ["my_x_japan_-_tokyo_udp", "my_x_japan_-_tokyo_-_2_udp", "my_x_usa_udp", "udp/US Buffalo"])
+    assert tunnels.candidate_regions(["my_x_japan_-_tokyo_udp", "buffalo"], conf) == [
+        "my_x_japan_-_tokyo_udp", "udp/US Buffalo", "my_x_japan_-_tokyo_-_2_udp", "my_x_usa_udp"]
+    assert tunnels.candidate_regions(["JAPAN"], conf)[:2] == ["my_x_japan_-_tokyo_-_2_udp", "my_x_japan_-_tokyo_udp"]
+
+
+def test_providers_lists_only_dirs_with_ovpn(tmp_path):
+    (tmp_path / "a" / "sub").mkdir(parents=True)
+    (tmp_path / "a" / "sub" / "x.ovpn").write_text("")
+    (tmp_path / "b").mkdir()
+    (tmp_path / "b" / "readme.txt").write_text("")
+    assert tunnels.providers(str(tmp_path)) == ["a"]
+    assert tunnels.conf_dir_for("ExpressVPN", "/c") == "/c/expressvpn"
+
+
+def test_sanitize_ovpn_drops_routes_and_removed_options(tmp_path):
+    f = tmp_path / "x.ovpn"
+    f.write_bytes(b"client\r\nns-cert-type server\r\nredirect-gateway def1\r\nroute 10.0.0.0 255.0.0.0\n"
+                  b"route-nopull\nroute-method exe\nkeysize 256\nkey-method 2\nup /etc/up.sh\nup-delay\ncipher AES-256-CBC\n"
+                  b"ca /etc/openvpn/tiger/ca.crt\ntls-auth /etc/openvpn/ironsocket/tls-auth.txt 1\n")
+    subprocess.run(["sh", os.path.join(os.path.dirname(__file__), "sanitize_ovpn.sh"), str(f)], check=True)
+    assert f.read_bytes() == (b"client\r\nremote-cert-tls server\r\nroute-nopull\nup-delay\ncipher AES-256-CBC\n"
+                              b"ca ca.crt\ntls-auth tls-auth.txt 1\n")
 
 
 def test_manager_skips_unresolvable_and_replaces_duplicate_egress(tmp_path):

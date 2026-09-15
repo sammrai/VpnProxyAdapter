@@ -5,6 +5,7 @@
 中継は送信ソケットを tun<i> に結びつけるので、その通信だけがトンネルを通る。
 サーバーが違っても同じ範囲のトンネル IP が払い出されうるので、送信元 IP ではなくデバイスで振り分けている。
 
+- 設定は /configs/<プロバイダ>/ 以下の .ovpn。地域の名前は、そこからの相対パスから .ovpn を除いたもの
 - 接続先の名前が引けない地域は飛ばす (設定リポジトリには廃止済みのサーバーが残っている)
 - 出口 IP が他のトンネルと重複したら、別の地域に張り替える
 - 落ちたら張り直す。同じ地域で max_region_fails 回失敗したら、その地域は使わない
@@ -19,25 +20,39 @@ import time
 
 logger = logging.getLogger("gateway.tunnels")
 
-CONF_DIR = os.environ.get("CONF_DIR", "/configs/expressvpn")
+CONF_ROOT = os.environ.get("CONF_ROOT", "/configs")
+CONF_DIR = os.environ.get("CONF_DIR", os.path.join(CONF_ROOT, "expressvpn"))
 AUTH_FILE = os.environ.get("AUTH_FILE", "/run/vpn-auth")
 LOG_DIR = os.environ.get("TUNNEL_LOG_DIR", "/tmp")
 UP_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tun_up.sh")
 READY_MARK = "Initialization Sequence Completed"
 
-# 東京から近い順。足りなければ残りの地域を名前順に使う。
+# プロバイダごとの優先順。載っていないプロバイダは名前順に使う。
+# ExpressVPN は東京から近い順。足りなければ残りの地域を名前順に使う。
 # thailand は接続までは通るが外に出られないことが続いた (2026-09-15 に 2 回) ので、優先の一覧から外している
-DEFAULT_REGIONS = [
+EXPRESSVPN_REGIONS = [
     "japan_-_tokyo", "japan_-_shibuya", "japan_-_yokohama", "hong_kong_-_1", "hong_kong_-_2",
     "south_korea_-_2", "taiwan_-_3", "singapore_-_cbd", "singapore_-_jurong", "singapore_-_marina_bay",
     "philippines", "malaysia", "vietnam", "macau", "guam", "indonesia", "cambodia",
     "usa_-_los_angeles_-_1", "usa_-_san_francisco", "usa_-_seattle", "usa_-_los_angeles_-_2",
     "australia_-_sydney", "usa_-_santa_monica", "usa_-_phoenix", "usa_-_dallas", "usa_-_chicago",
 ]
+PREFERRED = {"expressvpn": [f"my_expressvpn_{r}_udp" for r in EXPRESSVPN_REGIONS]}
+
+
+def conf_dir_for(provider: str, root: str = None) -> str:
+    return os.path.join(root or CONF_ROOT, provider.lower())
+
+
+def providers(root: str = None):
+    """.ovpn があるプロバイダの一覧。"""
+    r = root or CONF_ROOT
+    return sorted(p for p in os.listdir(r)
+                  if any(f.endswith(".ovpn") for _, _, files in os.walk(os.path.join(r, p)) for f in files))
 
 
 def config_path(region: str, conf_dir: str = None) -> str:
-    return os.path.join(conf_dir or CONF_DIR, f"my_expressvpn_{region}_udp.ovpn")
+    return os.path.join(conf_dir or CONF_DIR, region + ".ovpn")
 
 
 def remote_host(path: str):
@@ -49,12 +64,17 @@ def remote_host(path: str):
 
 
 def candidate_regions(preferred, conf_dir: str = None):
-    """設定がある地域を、preferred を先頭にして返す。"""
+    """設定がある地域を、preferred に合うものを先頭にして返す。
+
+    preferred の各要素は、名前が一致する地域があればそれ、無ければ名前に含む地域すべてに合う (大文字小文字は区別しない)。
+    """
     d = conf_dir or CONF_DIR
-    names = sorted(f[len("my_expressvpn_"):-len("_udp.ovpn")] for f in os.listdir(d)
-                   if f.startswith("my_expressvpn_") and f.endswith("_udp.ovpn"))
-    have = set(names)
-    return list(dict.fromkeys([r for r in preferred if r in have] + names))
+    names = sorted(os.path.relpath(os.path.join(root, f), d)[:-len(".ovpn")]
+                   for root, _, files in os.walk(d) for f in files if f.endswith(".ovpn"))
+    head = []
+    for p in (x.lower() for x in preferred):
+        head += [n for n in names if n.lower() == p] or [n for n in names if p in n.lower()]
+    return list(dict.fromkeys(head + names))
 
 
 def write_auth(user: str, password: str, path: str = None) -> None:
@@ -65,7 +85,9 @@ def write_auth(user: str, password: str, path: str = None) -> None:
 
 
 def openvpn_argv(region: str, dev: str, table: int, conf_dir: str = None, auth: str = None):
-    return ["openvpn", "--config", config_path(region, conf_dir),
+    path = config_path(region, conf_dir)
+    return ["openvpn", "--cd", os.path.dirname(path),   # 設定の中の ca.crt などの相対パスを解決する
+            "--config", path,
             "--dev", dev, "--dev-type", "tun",
             "--route-nopull",                       # 既定経路を奪わない
             "--auth-user-pass", auth or AUTH_FILE, "--auth-nocache",

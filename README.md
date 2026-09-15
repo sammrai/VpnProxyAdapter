@@ -14,15 +14,18 @@ VpnProxyAdapter is a Docker-based solution that facilitates internet connections
 
 1. Setting up the .env file
 
-   The project root contains a `.env` file with your ExpressVPN OpenVPN credentials.
+   The project root contains a `.env` file with your VPN provider's OpenVPN credentials.
 
    ```
    OPENVPN_USERNAME=your_username
    OPENVPN_PASSWORD=your_password
+   # OPENVPN_PROVIDER=expressvpn
    ```
 
-   - `OPENVPN_USERNAME` and `OPENVPN_PASSWORD` are the OpenVPN (manual configuration) credentials from your ExpressVPN account.
-   - Regions are chosen automatically (nearest to Tokyo first). To pick them yourself, set `REGIONS` (see the Gateway section). Region names are listed in [README-configlist.md](./README-configlist.md) without the `my_expressvpn_` prefix and `_udp` suffix.
+   - `OPENVPN_USERNAME` and `OPENVPN_PASSWORD` are the OpenVPN (manual configuration) credentials from your VPN provider.
+   - `OPENVPN_PROVIDER` (default `expressvpn`) is a folder name in [notFloran/vpn-configs-contrib/openvpn](https://github.com/notFloran/vpn-configs-contrib/tree/main/openvpn), e.g. `surfshark`, `protonvpn`, `windscribe`. Not supported: providers without `.ovpn` files there (`nordvpn`, `pia`, `ipvanish`, `vyprvpn`), and providers whose CA certificates are too weak for OpenSSL 3 (`ironsocket`, `proxpn`, `vpnbook`).
+   - Regions are the `.ovpn` file names. ExpressVPN uses the nearest to Tokyo first; other providers use name order. To pick them yourself, set `REGIONS` (see the Gateway section). ExpressVPN region names are listed in [README-configlist.md](./README-configlist.md).
+   - Providers limit simultaneous connections. If yours allows fewer than 19, lower `GATEWAY_EXITS`.
 
 1. Starting the service
 
@@ -76,7 +79,8 @@ curl -s 127.0.0.1:8545 -H 'content-type: application/json' \
 | `EXITS` (`GATEWAY_EXITS`) | 20 | 出口数。ホスト 1 + VPN EXITS-1 |
 | `RATE` (`GATEWAY_RATE`) | 6 | 出口ごとの毎秒リクエスト |
 | `UPSTREAM` | Tenderly 公開 RPC | 転送先 |
-| `REGIONS` | 東京から近い順 | 使う地域をカンマ区切りで (先頭から優先) |
+| `OPENVPN_PROVIDER` | expressvpn | 設定リポジトリ `openvpn/` のフォルダ名 |
+| `REGIONS` | ExpressVPN は東京から近い順、ほかは名前順 | 使う地域をカンマ区切りで (先頭から優先)。設定ファイル名 (`.ovpn` を除く) か、その一部 (`japan` など) |
 | `INCLUDE_HOST` | 1 | 0 でホスト自身を出口に含めない (JSON-RPC 中継のみ。プロキシはホストを使わない) |
 | `PROXY_LISTEN` | 0.0.0.0:8118 | 汎用 HTTP プロキシの待受。空で無効 |
 
@@ -90,7 +94,9 @@ curl -s 127.0.0.1:8545 -H 'content-type: application/json' \
 - 8545 は本文をそのまま転送先へ POST する中継 (JSON-RPC 向け)
 - 8901 (コンテナ内 8118) は汎用 HTTP プロキシ。接続ごとに VPN の出口をラウンドロビンで選ぶ。
   keep-alive の接続は張っている間同じ出口のまま。名前解決はトンネルを通さない
-- ExpressVPN の同時接続には上限がある。実測では VPN 20 本で既存の接続は切れなかった
+- 設定はイメージに全プロバイダ分入っている。経路を足す指定 (`redirect-gateway` / `route`) と OpenVPN 2.6 で消えた指定は
+  ビルド時に `sanitize_ovpn.sh` で消す。それでも繋がらない設定は、失敗した地域として飛ばして次の地域に張る
+- 同時接続の上限はプロバイダごとに違う。ExpressVPN は実測で VPN 20 本張っても既存の接続は切れなかった
 - `thailand` は接続までは通るが外に出られないことがあり、優先の一覧から外している (出口 IP が取れないトンネルは自動で別の地域に張り替える)
 
 テスト: `docker compose build vpnproxy && docker run --rm --entrypoint pytest vpnproxy:local -q`
