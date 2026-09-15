@@ -25,7 +25,7 @@ VpnProxyAdapter is a Docker-based solution that facilitates internet connections
    - `OPENVPN_USERNAME` and `OPENVPN_PASSWORD` are the OpenVPN (manual configuration) credentials from your VPN provider.
    - `OPENVPN_PROVIDER` (default `expressvpn`) is a folder name in [notFloran/vpn-configs-contrib/openvpn](https://github.com/notFloran/vpn-configs-contrib/tree/main/openvpn), e.g. `surfshark`, `protonvpn`, `windscribe`. Not supported: providers without `.ovpn` files there (`nordvpn`, `pia`, `ipvanish`, `vyprvpn`), and providers whose CA certificates are too weak for OpenSSL 3 (`ironsocket`, `proxpn`, `vpnbook`).
    - Regions are the `.ovpn` file names. ExpressVPN uses the nearest to Tokyo first; other providers use name order. To pick them yourself, set `REGIONS` (see the Gateway section). ExpressVPN region names are listed in [README-configlist.md](./README-configlist.md).
-   - Providers limit simultaneous connections. If yours allows fewer than 19, lower `GATEWAY_EXITS`.
+   - Providers limit simultaneous connections. If yours allows fewer than 19, lower `GATEWAY_EXITS` (see [Switching VPN providers](#switching-vpn-providers)).
 
 1. Starting the service
 
@@ -36,6 +36,38 @@ VpnProxyAdapter is a Docker-based solution that facilitates internet connections
    ```
 
 This starts several VPN tunnels in one container and exposes them behind a single HTTP proxy port.
+
+### Switching VPN providers
+
+1. Put the provider's OpenVPN credentials and name in `.env`. `GATEWAY_EXITS` and `REGIONS` can go there too.
+
+   ```
+   OPENVPN_USERNAME=your_surfshark_openvpn_username
+   OPENVPN_PASSWORD=your_surfshark_openvpn_password
+   OPENVPN_PROVIDER=surfshark
+   # Host 1 + VPN 4. Keep VPN tunnels within the provider's simultaneous connection limit.
+   GATEWAY_EXITS=5
+   # Optional. Regions whose file name contains these come first.
+   REGIONS=jp,sg
+   ```
+
+   The name is the folder name in the config repo, in lower case. The credentials are the OpenVPN (manual setup) ones from the provider's dashboard, not your account login.
+
+1. Recreate the container.
+
+   ```bash
+   docker compose up -d vpnproxy
+   ```
+
+1. Check that the tunnels came up.
+
+   ```bash
+   docker logs vpnproxy 2>&1 | grep -E 'プロバイダ|up:|使えるプロバイダ'
+   curl -s 127.0.0.1:8545 | jq -r '.tunnels[] | "\(.dev) \(.region) \(.state)"'
+   ```
+
+   A wrong provider name stops the container with the list of available names in the log.
+   Tunnels stuck in `connecting` or `failed` usually mean wrong credentials or too many simultaneous connections.
 
 ## Usage
 
