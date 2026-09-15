@@ -1,27 +1,40 @@
 version: '3.8'
 services:
-  your_container:
-    image: curlimages/curl
-    tty: true
-    container_name: your_container
-    entrypoint: "/bin/sh -c"
-    command: '"tail -f /dev/null"'
-    environment:
-      http_proxy: vpnproxy:8118
-      https_proxy: vpnproxy:8118
+  # chrome:
+  #   image: vital987/chrome-novnc:latest
+  #   ports:
+  #     - "8081:8080"
+  #   environment:
+  #     http_proxy: vpnproxy:8118
+  #     https_proxy: vpnproxy:8118
+  #     VNC_PASS: pass
+  #     PORT: 8080
+  #   volumes:
+  #     - ./chrome-data:/data  # Cookie を保存するための永続化ボリューム
 
+  # 複数の VPN を 1 つのポートの裏で回す中継。詳しくは README の Gateway の節
+  #   docker compose up -d --build vpnproxy
+  #   GATEWAY_EXITS=30 docker compose up -d vpnproxy     # 出口数を変える
   vpnproxy:
-    image: haugene/transmission-openvpn:latest
+    build: ./gateway
+    image: vpnproxy:local
     container_name: vpnproxy
     cap_add:
       - NET_ADMIN
-    # ports:
-    #   - "8901:8118"
+    devices:
+      - /dev/net/tun
+    sysctls:
+      # 応答はトンネルから戻るが、既定の経路は eth0 のまま。逆経路検査で落とされないようにする
+      net.ipv4.conf.all.rp_filter: "0"
+      net.ipv4.conf.default.rp_filter: "0"
+    env_file:
+      - .env
     environment:
-      - OPENVPN_USERNAME=$OPENVPN_USERNAME
-      - OPENVPN_PASSWORD=$OPENVPN_PASSWORD
-      - OPENVPN_CONFIG=$OPENVPN_CONFIG
-      - OPENVPN_PROVIDER=$OPENVPN_PROVIDER
-      - WEBPROXY_ENABLED=true
-      - WEBPROXY_PORT=8118
-    restart: always
+      - EXITS=${GATEWAY_EXITS:-20}
+      - RATE=${GATEWAY_RATE:-6}
+    ports:
+      - "127.0.0.1:8545:8545"   # JSON-RPC 中継
+      - "8901:8118"             # 汎用 HTTP プロキシ (VPN の出口をラウンドロビン)
+    # 応答を丸ごと読んでから返すので、大きな応答が同時に重なるとメモリを食う (実測で 10GB)。マシン全体を巻き込まないよう上限を付ける
+    mem_limit: ${GATEWAY_MEM:-4g}
+    restart: unless-stopped
