@@ -117,3 +117,32 @@ def test_no_vpn_exit_returns_503():
             assert c.recv(1024).startswith(b"HTTP/1.1 503")
     finally:
         px.shutdown()
+
+
+def test_proxy_reports_429_from_plain_http(monkeypatch):
+    """平文 HTTP なら状態行が読めるので、弾かれたことを中継に報せられる。"""
+    import io
+    import gateway as gw
+
+    e = gw.Exit("a", "1.1.1.1", gw.session_for(None), device="tun1")
+    pool = gw.Pool([e], rate=10.0, rotate_after=0)
+
+    class FakeUp:
+        def __init__(self, data):
+            self.buf = io.BytesIO(data)
+
+        def recv(self, n):
+            return self.buf.read(n)
+
+    h = proxy.Handler.__new__(proxy.Handler)
+    h.rr = proxy.RoundRobin(pool, vpn_only=False)
+    h.exit = e
+    line = h._status_line(FakeUp(b"HTTP/1.1 429 Too Many Requests\r\nx: 1\r\n\r\n"))
+    assert line == b"HTTP/1.1 429 Too Many Requests\r\n"
+    assert e.errors.get("blocked") == 1
+
+    e2 = gw.Exit("b", "2.2.2.2", gw.session_for(None), device="tun2")
+    h.exit = e2
+    h.rr = proxy.RoundRobin(gw.Pool([e2], rate=10.0, rotate_after=0), vpn_only=False)
+    assert h._status_line(FakeUp(b"HTTP/1.1 200 OK\r\n\r\n")) == b"HTTP/1.1 200 OK\r\n"
+    assert "blocked" not in e2.errors

@@ -8,6 +8,10 @@
 - 出口を選ぶ単位は接続。HTTP は転送先に Connection: close を付けて 1 接続 1 リクエストにする
 - 接続先の名前はコンテナの DNS で引く (トンネル越しには引かない)
 - 休ませている出口 (中継で 429 などを受けたもの) は飛ばす。接続に失敗したら次の出口でやり直す
+- **平文 HTTP は応答の状態行を見て、429 / 403 なら「その IP が弾かれた」と中継に報せる**
+  (`Pool.blocked`)。数回続くとトンネルを張り直して IP を替える
+- **HTTPS (CONNECT) は中身が見えないので自動では気づけない。** 弾かれたと分かるのは利用側だけなので、
+  中継の `POST /rotate` に `{"egress": "1.2.3.4"}` を投げて替えてもらう
 """
 import logging
 import selectors
@@ -102,6 +106,7 @@ def pipe(a, b, idle: float):
 class Handler(socketserver.StreamRequestHandler):
     rbufsize = 0            # ヘッダの後ろに続くデータ (本文や TLS の最初の送信) を読み込み過ぎないように
     rr = None
+    exit = None                     # この接続に使った出口 (弾かれたときに報せるため)
     attempts = 3
     connect_timeout = 10.0
     idle_timeout = 300.0
@@ -149,7 +154,32 @@ class Handler(socketserver.StreamRequestHandler):
                 head += [h for h in headers if h.split(b":", 1)[0].strip().lower() not in HOP_HEADERS]
                 head.append(b"Connection: close")
                 up.sendall(b"\r\n".join(head) + b"\r\n\r\n")
+                first = self._status_line(up)
+                if first:
+                    self.connection.sendall(first)
             pipe(self.connection, up, self.idle_timeout)
+
+    def _status_line(self, up):
+        """応答の状態行だけ先に読んで、弾かれていれば中継に報せる。読んだ分はそのまま返す。"""
+        buf = b""
+        while len(buf) < 1024:
+            try:
+                b = up.recv(1)
+            except OSError:
+                return buf
+            if not b:
+                return buf
+            buf += b
+            if buf.endswith(b"\n"):
+                break
+        try:
+            code = int(buf.split(b" ")[1])
+        except (IndexError, ValueError):
+            return buf
+        if code in (403, 429) and self.exit is not None:
+            self.rr.pool.blocked(self.exit, f"{code} via proxy")
+            logger.info("プロキシ %s が %d を受けた (出口 %s)", self.exit.name, code, self.exit.egress)
+        return buf
 
     def _connect(self, addrs):
         tried, last = [], "使える VPN の出口が無い"
@@ -158,7 +188,9 @@ class Handler(socketserver.StreamRequestHandler):
             if e is None:
                 break
             try:
-                return connect_via(e.device, addrs, self.connect_timeout)
+                up = connect_via(e.device, addrs, self.connect_timeout)
+                self.exit = e
+                return up
             except OSError as exc:
                 tried.append(e)
                 last = f"{e.name}: {exc}"

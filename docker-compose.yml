@@ -31,7 +31,9 @@ services:
       - .env
     environment:
       - EXITS=${GATEWAY_EXITS:-20}
-      - RATE=${GATEWAY_RATE:-6}
+      - RATE=${GATEWAY_RATE:-15}
+      # 家の IP は使わない。Tenderly の 1 日の枠 (IP ごと 1GB) を live (家から直結) のために残す
+      - INCLUDE_HOST=${GATEWAY_INCLUDE_HOST:-0}
     ports:
       - "127.0.0.1:8545:8545"   # JSON-RPC 中継
       - "8901:8118"             # 汎用 HTTP プロキシ (VPN の出口をラウンドロビン)

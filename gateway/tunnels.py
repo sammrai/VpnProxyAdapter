@@ -9,6 +9,9 @@
 - 接続先の名前が引けない地域は飛ばす (設定リポジトリには廃止済みのサーバーが残っている)
 - 出口 IP が他のトンネルと重複したら、別の地域に張り替える
 - 落ちたら張り直す。同じ地域で max_region_fails 回失敗したら、その地域は使わない
+- **張るのは少しずつ** (起動時も張り直しも)。同時に接続中にするのは max_connecting 本まで、開始の間隔は launch_gap 秒以上。
+  30 本を一斉に張ると家のルーターの遅延が 0.2 ms から 75〜105 ms まで上がった (2026-09-23)。
+  2 本ずつにしたら、30 本そろうまで約 90 秒で、ルーターの遅延は最大 1.5 ms だった
 """
 import collections
 import logging
@@ -119,7 +122,8 @@ class Tunnel:
 class Manager:
     def __init__(self, n, regions, on_change, *, egress_of, session_of, conf_dir=None, log_dir=None,
                  spawn=_spawn, resolver=socket.getaddrinfo, clock=time.monotonic,
-                 ready_timeout=120.0, max_region_fails=2, interval=5.0):
+                 ready_timeout=120.0, max_region_fails=2, interval=5.0,
+                 max_connecting=2, launch_gap=2.0):
         self.tunnels = [Tunnel(i) for i in range(n)]
         self.queue = collections.deque(regions)
         self.region_fails = collections.Counter()
@@ -128,17 +132,25 @@ class Manager:
         self.conf_dir, self.log_dir = conf_dir, log_dir or LOG_DIR
         self.spawn, self.resolver, self.clock = spawn, resolver, clock
         self.ready_timeout, self.max_region_fails, self.interval = ready_timeout, max_region_fails, interval
+        self.max_connecting = max_connecting    # 同時に接続中にする上限。0 なら制限しない
+        self.launch_gap = launch_gap            # 接続を始める間隔の下限 (秒)
+        self.last_launch = -1e9
         self._stop = threading.Event()
 
     # --- 1 回分の見回り。テストからも呼ぶ ---
     def step(self):
         now = self.clock()
         changed = False
+        connecting = sum(t.state == "connecting" for t in self.tunnels)
         for t in self.tunnels:
             alive = t.proc is not None and t.proc.poll() is None
             if t.state in ("idle", "failed", "no-region"):
-                if now >= t.retry_at:
+                if (now >= t.retry_at and (not self.max_connecting or connecting < self.max_connecting)
+                        and now - self.last_launch >= self.launch_gap):
                     self._launch(t, now)
+                    if t.state == "connecting":
+                        connecting += 1
+                        self.last_launch = now
             elif t.state == "connecting":
                 if not alive:
                     self._fail(t, now, f"openvpn が終了した (ログ {t.log})")
@@ -162,6 +174,27 @@ class Manager:
         if changed:
             self.on_change(self.up())
         return changed
+
+    def rotate(self, dev, reason: str = "レート制限"):
+        """出口 IP を変えるためにトンネルを張り直す。
+
+        上流のレート制限は IP ごとなので、休ませるより IP を替えるほうが早く戻る。
+        **地域のせいではないので `region_fails` は増やさず、その地域は待ち行列に戻す。**
+        `retry_at` は今にする (`_fail` と違って待たせない)。
+        """
+        now = self.clock()
+        for t in self.tunnels:
+            if t.dev != dev or t.state != "up":
+                continue
+            self._kill(t)
+            if t.region:
+                self.queue.append(t.region)
+            logger.info("%s (%s) を張り直す: %s", t.dev, t.region, reason)
+            t.region = t.proc = t.egress = t.session = None
+            t.state, t.note, t.retry_at, t.fails = "failed", reason, now, 0
+            self.on_change(self.up())        # 張り直すあいだプールから外す
+            return True
+        return False
 
     def up(self):
         return [{"name": f"{t.dev}:{t.region}", "dev": t.dev, "egress": t.egress, "session": t.session}
